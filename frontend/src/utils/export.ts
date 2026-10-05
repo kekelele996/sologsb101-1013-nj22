@@ -11,11 +11,8 @@ import {
   stampBackupTime,
   type BackupPayload
 } from '@/utils/db'
-import {
-  BLEACH_LEVELS,
-  type BleachLevel
-} from '@/types/coralRecord'
-import { bleachGrade, bleachIndex, bleachedSharePct, coralCoveragePct, fishDensity, round } from '@/utils/bleach'
+import { type BleachLevel } from '@/types/coralRecord'
+import { bleachGrade, fishDensity, round, summarizeBeltCorals } from '@/utils/bleach'
 
 /** 备份集合键名 */
 export const BACKUP_KEYS = ['reefs', 'sites', 'belts', 'corals', 'fishes'] as const
@@ -174,7 +171,18 @@ export interface CoverageLine {
   surveyDate: string
   observer: string
   coralCount: number
+  /** 覆盖合计（cm）：按「属名+形态」取有效覆盖并按样带长度封顶 */
   coverCmTotal: number
+  /** 原始录入合计（cm，未去重） */
+  rawCoverCmTotal: number
+  /** 有效覆盖合计（cm，去重后、未封顶） */
+  effectiveCoverCmTotal: number
+  /** 同组重复录入被合并掉的长度（cm） */
+  mergedCoverCm: number
+  /** 超过样带长度被截掉的长度（cm） */
+  cappedTrimmedCm: number
+  /** 被截掉总量（cm） */
+  trimmedCoverCm: number
   /** 珊瑚覆盖率（%） */
   coveragePct: number
   /** 白化指数 0 ~ 4 */
@@ -214,23 +222,16 @@ export function buildCoverageLines(payload: BackupPayload): CoverageLine[] {
       const reef = site ? reefById.get(site.reefId) : undefined
       const corals = coralsByBelt.get(belt.id) ?? []
       const fishes = fishesByBelt.get(belt.id) ?? []
-      const coverCmTotal = round(
-        corals.reduce((sum, coral) => sum + coral.coverCm, 0),
-        1
-      )
-      const index = bleachIndex(corals)
-      const grade = bleachGrade(index)
-      const distribution: BleachDistribution = { 无: 0, 轻: 0, 中: 0, 重: 0, 死亡: 0 }
-      BLEACH_LEVELS.forEach((level) => {
-        distribution[level] = round(
-          corals.filter((coral) => coral.bleachLevel === level).reduce((sum, coral) => sum + coral.coverCm, 0),
-          1
-        )
-      })
+      const summary = summarizeBeltCorals(corals, belt.lengthM)
+      const grade = bleachGrade(summary.bleachIndex)
       const fishTotal = fishes.filter((fish) => fish.category === '鱼类').reduce((sum, fish) => sum + fish.count, 0)
       const invertebrateTotal = fishes
         .filter((fish) => fish.category === '无脊椎动物')
         .reduce((sum, fish) => sum + fish.count, 0)
+      const trimmedNote =
+        summary.trimmedCoverCm > 0
+          ? `；按属名+形态取有效覆盖，截掉 ${summary.trimmedCoverCm} cm（同组重复合并 ${summary.mergedCoverCm} cm、超样带截掉 ${summary.cappedTrimmedCm} cm）`
+          : ''
       return {
         beltId: belt.id,
         beltNo: belt.no,
@@ -243,12 +244,17 @@ export function buildCoverageLines(payload: BackupPayload): CoverageLine[] {
         surveyDate: belt.surveyDate,
         observer: belt.observer,
         coralCount: corals.length,
-        coverCmTotal,
-        coveragePct: coralCoveragePct(coverCmTotal, belt.lengthM),
-        bleachIndex: index,
+        coverCmTotal: summary.coverCmTotal,
+        rawCoverCmTotal: summary.rawCoverCmTotal,
+        effectiveCoverCmTotal: summary.effectiveCoverCmTotal,
+        mergedCoverCm: summary.mergedCoverCm,
+        cappedTrimmedCm: summary.cappedTrimmedCm,
+        trimmedCoverCm: summary.trimmedCoverCm,
+        coveragePct: summary.coveragePct,
+        bleachIndex: summary.bleachIndex,
         grade,
-        bleachedSharePct: bleachedSharePct(corals),
-        distribution,
+        bleachedSharePct: summary.bleachedSharePct,
+        distribution: summary.distribution,
         fishTotal,
         invertebrateTotal,
         fishDensity: fishDensity(fishTotal, belt.lengthM),
@@ -256,8 +262,8 @@ export function buildCoverageLines(payload: BackupPayload): CoverageLine[] {
           corals.length === 0
             ? '该样带尚未录入珊瑚记录'
             : grade === '无'
-              ? `珊瑚覆盖率 ${coralCoveragePct(coverCmTotal, belt.lengthM)}%，未见白化`
-              : `珊瑚覆盖率 ${coralCoveragePct(coverCmTotal, belt.lengthM)}%，白化指数 ${index}（${grade}），白化占比 ${bleachedSharePct(corals)}%`
+              ? `珊瑚覆盖率 ${summary.coveragePct}%，未见白化${trimmedNote}`
+              : `珊瑚覆盖率 ${summary.coveragePct}%，白化指数 ${summary.bleachIndex}（${grade}），白化占比 ${summary.bleachedSharePct}%${trimmedNote}`
       }
     })
     .sort((a, b) => b.bleachIndex - a.bleachIndex)
@@ -271,13 +277,21 @@ export interface ReefSummary {
   siteCount: number
   beltCount: number
   coralCount: number
+  /** 覆盖合计（cm）：各样带有效覆盖封顶后累计 */
   coverCmTotal: number
+  /** 原始录入合计（cm，未去重） */
+  rawCoverCmTotal: number
+  /** 被截掉总量（cm） */
+  trimmedCoverCm: number
   avgBleachIndex: number
   grade: BleachLevel
   fishTotal: number
 }
 
-export function buildReefSummaries(payload: BackupPayload, lines: CoverageLine[]): ReefSummary[] {
+export function buildReefSummaries(
+  payload: BackupPayload,
+  lines: Array<Pick<CoverageLine, 'reefId' | 'bleachIndex' | 'coverCmTotal' | 'rawCoverCmTotal' | 'trimmedCoverCm'>>
+): ReefSummary[] {
   return payload.reefs.map((reef) => {
     const siteIds = new Set(payload.sites.filter((site) => site.reefId === reef.id).map((site) => site.id))
     const beltIds = new Set(payload.belts.filter((belt) => siteIds.has(belt.siteId)).map((belt) => belt.id))
@@ -295,7 +309,15 @@ export function buildReefSummaries(payload: BackupPayload, lines: CoverageLine[]
       beltCount: beltIds.size,
       coralCount: corals.length,
       coverCmTotal: round(
-        corals.reduce((sum, coral) => sum + coral.coverCm, 0),
+        lines4Reef.reduce((sum, line) => sum + line.coverCmTotal, 0),
+        1
+      ),
+      rawCoverCmTotal: round(
+        lines4Reef.reduce((sum, line) => sum + line.rawCoverCmTotal, 0),
+        1
+      ),
+      trimmedCoverCm: round(
+        lines4Reef.reduce((sum, line) => sum + line.trimmedCoverCm, 0),
         1
       ),
       avgBleachIndex,

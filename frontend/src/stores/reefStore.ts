@@ -9,7 +9,7 @@ import type { Reef, ReefFilterState } from '@/types/reef'
 import { createEmptyReefFilter } from '@/types/reef'
 import type { Site, SiteFilterState } from '@/types/site'
 import { createEmptySiteFilter } from '@/types/site'
-import { bleachIndex, round } from '@/utils/bleach'
+import { bleachIndex, effectiveCoralsByBelt, round } from '@/utils/bleach'
 
 export const useReefStore = defineStore('reef', () => {
   const reefs = ref<Reef[]>([])
@@ -207,7 +207,7 @@ export const useReefStore = defineStore('reef', () => {
         continue
       }
       const corals = await db.corals.where('beltId').anyOf(beltIds).toArray()
-      result[site.id] = round(bleachIndex(corals), 2)
+      result[site.id] = round(bleachIndex(effectiveCoralsByBelt(corals)), 2)
     }
     return result
   }

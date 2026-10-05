@@ -19,7 +19,7 @@ import { useBeltStore } from '@/stores/beltStore'
 import { useSurveyStore } from '@/stores/surveyStore'
 import { AREA_BUCKETS, createEmptyReefFilter, PROTECT_STATUSES } from '@/types/reef'
 import type { ProtectStatus, Reef } from '@/types/reef'
-import { bleachGrade, bleachIndex } from '@/utils/bleach'
+import { bleachGrade, bleachIndex, effectiveCoralsByBelt } from '@/utils/bleach'
 import { initDatabase } from '@/utils/db'
 
 const route = useRoute()
@@ -49,7 +49,7 @@ const cards = computed(() =>
     const beltIds = new Set(belts.map((belt) => belt.id))
     const corals = surveyStore.corals.filter((coral) => beltIds.has(coral.beltId))
     const fishes = surveyStore.fishes.filter((fish) => beltIds.has(fish.beltId))
-    const index = bleachIndex(corals)
+    const index = bleachIndex(effectiveCoralsByBelt(corals))
     return {
       reef,
       siteCount: sites.length,

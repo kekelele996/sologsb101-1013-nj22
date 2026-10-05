@@ -17,7 +17,7 @@ import { ORIENTATION_ORDER, useBeltStore } from '@/stores/beltStore'
 import { useSurveyStore } from '@/stores/surveyStore'
 import { BELT_LENGTH_PRESETS, ORIENTATIONS } from '@/types/belt'
 import type { Belt, Orientation } from '@/types/belt'
-import { bleachGrade, bleachIndex, coralCoveragePct, fishDensity } from '@/utils/bleach'
+import { bleachGrade, fishDensity, summarizeBeltCorals } from '@/utils/bleach'
 import { initDatabase } from '@/utils/db'
 
 const route = useRoute()
@@ -41,22 +41,21 @@ const form = reactive({
   observer: ''
 })
 
-/** 样带行：回显珊瑚记录数、鱼类记录数、覆盖率与白化指数 */
+/** 样带行：回显珊瑚记录数、鱼类记录数、覆盖率与白化指数（有效覆盖口径） */
 const rows = computed(() =>
   beltStore.beltsOfSite(siteId.value).map((belt) => {
     const corals = surveyStore.coralsOfBelt(belt.id)
     const fishes = surveyStore.fishesOfBelt(belt.id)
-    const coverCmTotal = corals.reduce((sum, coral) => sum + coral.coverCm, 0)
-    const index = bleachIndex(corals)
+    const summary = summarizeBeltCorals(corals, belt.lengthM)
     const fishTotal = fishes.filter((fish) => fish.category === '鱼类').reduce((sum, fish) => sum + fish.count, 0)
     return {
       belt,
       coralCount: corals.length,
       fishCount: fishes.length,
-      coverCmTotal,
-      coveragePct: coralCoveragePct(coverCmTotal, belt.lengthM),
-      bleachIndex: index,
-      grade: bleachGrade(index),
+      coverCmTotal: summary.coverCmTotal,
+      coveragePct: summary.coveragePct,
+      bleachIndex: summary.bleachIndex,
+      grade: bleachGrade(summary.bleachIndex),
       fishDensity: fishDensity(fishTotal, belt.lengthM)
     }
   })

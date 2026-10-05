@@ -104,29 +104,7 @@ async function refresh(): Promise<void> {
   lastBackupAt.value = readLastBackupAt()
   stampedVersion.value = readStampedDbVersion()
   const payload = await buildBackupPayload()
-  reefSummaries.value = buildReefSummaries(payload, surveyStore.coverageRows.map((row) => ({
-    beltId: row.beltId,
-    beltNo: row.beltNo,
-    reefId: row.reefId,
-    reefName: row.reefName,
-    siteId: row.siteId,
-    siteNo: row.siteNo,
-    lengthM: row.lengthM,
-    orientation: row.orientation,
-    surveyDate: row.surveyDate,
-    observer: row.observer,
-    coralCount: row.coralCount,
-    coverCmTotal: row.coverCmTotal,
-    coveragePct: row.coveragePct,
-    bleachIndex: row.bleachIndex,
-    grade: row.grade,
-    bleachedSharePct: row.bleachedSharePct,
-    distribution: row.distribution,
-    fishTotal: row.fishTotal,
-    invertebrateTotal: row.invertebrateTotal,
-    fishDensity: row.fishDensity,
-    conclusion: ''
-  })))
+  reefSummaries.value = buildReefSummaries(payload, surveyStore.coverageRows)
 }
 
 function handleFilterChange(): void {
@@ -215,10 +193,13 @@ async function handleDatabaseReset(): Promise<void> {
 
 async function copySummary(): Promise<void> {
   const text = rows.value
-    .map(
-      (row) =>
-        `${row.reefName}｜站位 ${row.siteNo}｜样带 ${row.beltNo}（${row.orientation}向 ${row.lengthM} m）：珊瑚覆盖率 ${row.coveragePct}%，白化指数 ${row.bleachIndex}（${row.grade}），白化占比 ${row.bleachedSharePct}%，鱼类 ${row.fishTotal} 尾（${row.fishDensity} 尾/100m²）`
-    )
+    .map((row) => {
+      const trimmedNote =
+        row.trimmedCoverCm > 0
+          ? `；按属名+形态取有效覆盖，截掉 ${row.trimmedCoverCm} cm（重复合并 ${row.mergedCoverCm} cm、超样带 ${row.cappedTrimmedCm} cm）`
+          : ''
+      return `${row.reefName}｜站位 ${row.siteNo}｜样带 ${row.beltNo}（${row.orientation}向 ${row.lengthM} m）：珊瑚覆盖率 ${row.coveragePct}%，白化指数 ${row.bleachIndex}（${row.grade}），白化占比 ${row.bleachedSharePct}%，鱼类 ${row.fishTotal} 尾（${row.fishDensity} 尾/100m²）${trimmedNote}`
+    })
     .join('\n')
   try {
     await navigator.clipboard.writeText(text)
@@ -249,7 +230,7 @@ onMounted(() => {
       <div>
         <h2 class="page__title">白化等级评定与覆盖度汇总</h2>
         <p class="gb-hint">
-          按样带汇总珊瑚覆盖率、白化指数（按覆盖长度加权，0 ~ 4）与鱼类密度，并可按礁区、白化等级筛选；同时提供结构版本查看与 JSON 导入导出。
+          按样带汇总珊瑚覆盖率、白化指数（按覆盖长度加权，0 ~ 4）与鱼类密度：同「属名 + 形态」重复录入只取最长那条计入覆盖、白化等级取组内最重，合计超样带长度封顶；可按礁区、白化等级筛选，并提供结构版本查看与 JSON 导入导出。
         </p>
       </div>
       <div class="page__actions">
@@ -350,10 +331,11 @@ onMounted(() => {
             <span class="gb-mono">{{ row.coralCount }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="覆盖率" width="130" align="right">
+        <el-table-column label="覆盖率" width="140" align="right">
           <template #default="{ row }">
             <span class="gb-mono">{{ row.coveragePct }}%</span>
             <div class="gb-hint gb-mono">{{ row.coverCmTotal }} cm</div>
+            <div v-if="row.trimmedCoverCm > 0" class="gb-hint gb-mono page__trim">截掉 {{ row.trimmedCoverCm }} cm</div>
           </template>
         </el-table-column>
         <el-table-column label="白化评定" width="170">
@@ -371,7 +353,7 @@ onMounted(() => {
                 class="page__mini-bar"
                 :style="{
                   background: BLEACH_COLOR[level],
-                  width: barPercent(row.distribution[level], row.coverCmTotal),
+                  width: barPercent(row.distribution[level], row.effectiveCoverCmTotal),
                   opacity: row.distribution[level] > 0 ? 1 : 0.15
                 }"
                 :title="`${level}：${row.distribution[level]} cm`"
@@ -417,9 +399,10 @@ onMounted(() => {
             <span class="gb-mono">{{ row.coralCount }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="覆盖长度" width="130" align="right">
+        <el-table-column label="覆盖长度" width="150" align="right">
           <template #default="{ row }">
             <span class="gb-mono">{{ row.coverCmTotal }} cm</span>
+            <div v-if="row.trimmedCoverCm > 0" class="gb-hint gb-mono page__trim">截掉 {{ row.trimmedCoverCm }} cm</div>
           </template>
         </el-table-column>
         <el-table-column label="平均白化指数" width="160">
@@ -529,5 +512,9 @@ onMounted(() => {
 .page__mini-bar {
   display: block;
   height: 100%;
+}
+
+.page__trim {
+  color: #c0392b;
 }
 </style>

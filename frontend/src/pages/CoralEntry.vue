@@ -23,7 +23,7 @@ import {
   parseCoralPaste
 } from '@/types/coralRecord'
 import type { BleachLevel, CoralForm, CoralRecord } from '@/types/coralRecord'
-import { BLEACH_BG, BLEACH_COLOR, bleachGrade, bleachIndex, bleachedSharePct, coralCoveragePct, groupByForm, groupByGenus } from '@/utils/bleach'
+import { BLEACH_BG, BLEACH_COLOR, bleachGrade, bleachIndex, groupByForm, groupByGenus, summarizeBeltCorals } from '@/utils/bleach'
 import { initDatabase } from '@/utils/db'
 
 const route = useRoute()
@@ -54,42 +54,63 @@ const form = reactive({
 
 const records = computed(() => surveyStore.coralsOfBelt(beltId.value))
 
-/** 按属名分组汇总 */
+/** 有效覆盖汇总：同「属名 + 形态」重复录入取最长那条，合计超样带长度封顶 */
+const summary = computed(() => summarizeBeltCorals(records.value, belt.value?.lengthM ?? 0))
+
+/** 按属名分组汇总（有效覆盖口径，条数为原始录入条数） */
 const genusGroups = computed(() =>
-  groupByGenus(records.value).map((group) => {
-    const list = records.value.filter((record) => record.genus === group.genus)
+  groupByGenus(summary.value.effective).map((group) => {
+    const list = summary.value.effective.filter((item) => item.genus === group.genus)
     const index = bleachIndex(list)
-    return { ...group, count: list.length, bleachIndex: index, grade: bleachGrade(index) }
+    const rawCount = records.value.filter((record) => record.genus === group.genus).length
+    return { ...group, count: rawCount, bleachIndex: index, grade: bleachGrade(index) }
   })
 )
 
-/** 按形态分组汇总 */
-const formGroups = computed(() => groupByForm(records.value))
+/** 按形态分组汇总（有效覆盖口径） */
+const formGroups = computed(() => groupByForm(summary.value.effective))
 
 const stats = computed(() => {
   const list = records.value
-  const coverCmTotal = list.reduce((sum, record) => sum + record.coverCm, 0)
-  const index = bleachIndex(list)
   return {
     coralCount: list.length,
-    coverCmTotal,
-    coveragePct: belt.value ? coralCoveragePct(coverCmTotal, belt.value.lengthM) : 0,
-    bleachIndex: index,
-    grade: bleachGrade(index),
-    bleachedSharePct: bleachedSharePct(list),
+    rawCoverCmTotal: summary.value.rawCoverCmTotal,
+    effectiveCoverCmTotal: summary.value.effectiveCoverCmTotal,
+    coverCmTotal: summary.value.coverCmTotal,
+    trimmedCoverCm: summary.value.trimmedCoverCm,
+    mergedCoverCm: summary.value.mergedCoverCm,
+    cappedTrimmedCm: summary.value.cappedTrimmedCm,
+    coveragePct: summary.value.coveragePct,
+    bleachIndex: summary.value.bleachIndex,
+    grade: bleachGrade(summary.value.bleachIndex),
+    bleachedSharePct: summary.value.bleachedSharePct,
     maxCoverCm: list.length ? Math.max(...list.map((record) => record.coverCm)) : 0
   }
 })
 
-/** 白化等级 → 累计覆盖长度 */
-const distribution = computed<Record<BleachLevel, number>>(() => {
-  const result: Record<BleachLevel, number> = { 无: 0, 轻: 0, 中: 0, 重: 0, 死亡: 0 }
-  BLEACH_LEVELS.forEach((level) => {
-    result[level] = records.value
-      .filter((record) => record.bleachLevel === level)
-      .reduce((sum, record) => sum + record.coverCm, 0)
+/** 白化等级 → 有效覆盖长度 */
+const distribution = computed<Record<BleachLevel, number>>(() => summary.value.distribution)
+
+/**
+ * 每行记录的有效覆盖标记：同「属名 + 形态」组内只有覆盖最长那条计入，
+ * 其余标记为重复录入（覆盖不计入，白化等级仍参与组内取最重）。
+ */
+const rowFlags = computed(() => {
+  const flags = new Map<string, { kept: boolean; groupSize: number }>()
+  const groups = new Map<string, CoralRecord[]>()
+  records.value.forEach((record) => {
+    const key = `${record.genus}::${record.form}`
+    const list = groups.get(key) ?? []
+    list.push(record)
+    groups.set(key, list)
   })
-  return result
+  groups.forEach((list) => {
+    const sorted = [...list].sort((a, b) => b.coverCm - a.coverCm || a.createdAt - b.createdAt)
+    sorted.forEach((record, index) => {
+      flags.set(record.id, { kept: index === 0, groupSize: list.length })
+    })
+  })
+  return flags
 })
 
 /** 进度条宽度（%），总量为 0 时返回 0% */
@@ -271,7 +292,7 @@ onMounted(() => {
             <el-tag size="small" type="info" effect="plain">{{ belt.surveyDate }}</el-tag>
           </h2>
           <p class="gb-hint">
-            按属名与形态逐条录入覆盖长度与白化等级；覆盖率 = 覆盖长度合计 / 样带长度，白化指数按覆盖长度加权。
+            按属名与形态逐条录入覆盖长度与白化等级；同「属名 + 形态」的重复录入只取最长那条计入覆盖、白化等级取组内最重，合计超样带长度自动封顶。
           </p>
         </div>
         <div class="page__actions">
@@ -283,7 +304,7 @@ onMounted(() => {
 
       <div class="gb-stats-row">
         <StatBadge label="珊瑚记录" :value="stats.coralCount" suffix="条" icon="Histogram" />
-        <StatBadge label="覆盖长度合计" :value="stats.coverCmTotal" suffix="cm" tone="info" icon="Odometer" />
+        <StatBadge label="有效覆盖长度" :value="stats.coverCmTotal" suffix="cm" tone="info" icon="Odometer" />
         <StatBadge label="珊瑚覆盖率" :value="stats.coveragePct" suffix="%" :percent="Math.min(100, stats.coveragePct)" tone="success" icon="PieChart" />
         <StatBadge
           label="白化指数"
@@ -293,7 +314,23 @@ onMounted(() => {
           :icon="stats.bleachIndex > 1 ? 'WarningFilled' : 'DataLine'"
         />
         <StatBadge label="白化占比" :value="stats.bleachedSharePct" suffix="%" tone="warning" icon="TrendCharts" />
+        <StatBadge
+          v-if="stats.trimmedCoverCm > 0"
+          label="被截掉"
+          :value="stats.trimmedCoverCm"
+          suffix="cm"
+          tone="danger"
+          icon="WarningFilled"
+        />
       </div>
+
+      <el-alert
+        v-if="stats.trimmedCoverCm > 0"
+        type="warning"
+        :closable="false"
+        show-icon
+        :title="`按「属名 + 形态」分组取有效覆盖，共截掉 ${stats.trimmedCoverCm} cm：同组重复合并 ${stats.mergedCoverCm} cm、超出样带长度（${belt.lengthM * 100} cm）截掉 ${stats.cappedTrimmedCm} cm；原始录入合计 ${stats.rawCoverCmTotal} cm`"
+      />
 
       <el-card v-if="records.length > 0" shadow="never" class="gb-panel">
         <div class="gb-panel-title">
@@ -307,14 +344,14 @@ onMounted(() => {
         </div>
         <div class="page__grid">
           <div>
-            <h4 class="page__sub">按属名分组（覆盖长度 cm）</h4>
+            <h4 class="page__sub">按属名分组（有效覆盖 cm）</h4>
             <div class="gb-bars">
               <div v-for="group in genusGroups" :key="group.genus" class="gb-bar">
                 <span>{{ group.genus }}</span>
                 <span class="gb-bar__track">
                   <span
                     class="gb-bar__fill"
-                    :style="{ background: '#0b5d5a', width: barPercent(group.coverCm, stats.coverCmTotal) }"
+                    :style="{ background: '#0b5d5a', width: barPercent(group.coverCm, stats.effectiveCoverCmTotal) }"
                   ></span>
                 </span>
                 <span class="gb-mono">
@@ -325,14 +362,14 @@ onMounted(() => {
             </div>
           </div>
           <div>
-            <h4 class="page__sub">按形态分组（覆盖长度 cm）</h4>
+            <h4 class="page__sub">按形态分组（有效覆盖 cm）</h4>
             <div class="gb-bars">
               <div v-for="group in formGroups" :key="group.form" class="gb-bar">
                 <span>{{ group.form }}</span>
                 <span class="gb-bar__track">
                   <span
                     class="gb-bar__fill"
-                    :style="{ background: '#3f9ec4', width: barPercent(group.coverCm, stats.coverCmTotal) }"
+                    :style="{ background: '#3f9ec4', width: barPercent(group.coverCm, stats.effectiveCoverCmTotal) }"
                   ></span>
                 </span>
                 <span class="gb-mono">{{ group.coverCm }} cm</span>
@@ -340,14 +377,14 @@ onMounted(() => {
             </div>
           </div>
           <div>
-            <h4 class="page__sub">白化等级分布（覆盖长度 cm）</h4>
+            <h4 class="page__sub">白化等级分布（有效覆盖 cm）</h4>
             <div class="gb-bars">
               <div v-for="level in BLEACH_LEVELS" :key="`bar-${level}`" class="gb-bar">
                 <span>{{ level }}</span>
                 <span class="gb-bar__track">
                   <span
                     class="gb-bar__fill"
-                    :style="{ background: BLEACH_COLOR[level], width: barPercent(distribution[level], stats.coverCmTotal) }"
+                    :style="{ background: BLEACH_COLOR[level], width: barPercent(distribution[level], stats.effectiveCoverCmTotal) }"
                   ></span>
                 </span>
                 <span class="gb-mono">{{ distribution[level] }} cm</span>
@@ -375,11 +412,18 @@ onMounted(() => {
         </el-table-column>
         <el-table-column prop="genus" label="属名" min-width="140" />
         <el-table-column prop="form" label="形态" width="100" />
-        <el-table-column label="覆盖长度 (cm)" width="140" align="right">
+        <el-table-column label="覆盖长度 (cm)" width="170" align="right">
           <template #default="{ row }">
             <span class="gb-mono">{{ row.coverCm }}</span>
             <div class="gb-hint gb-mono">
               占样带 {{ belt.lengthM > 0 ? ((row.coverCm / (belt.lengthM * 100)) * 100).toFixed(1) : '0.0' }}%
+            </div>
+            <div
+              v-if="(rowFlags.get(row.id)?.groupSize ?? 1) > 1"
+              class="gb-hint"
+              :class="{ page__dropped: !rowFlags.get(row.id)?.kept }"
+            >
+              {{ rowFlags.get(row.id)?.kept ? `同组 ${rowFlags.get(row.id)?.groupSize} 条，取最长计入` : '同组重复，未计入覆盖' }}
             </div>
           </template>
         </el-table-column>
@@ -402,9 +446,9 @@ onMounted(() => {
 
       <p v-if="records.length > 0" class="gb-hint">
           <el-button size="small" text type="primary" @click="toggleSelectAll">
-            {selectedIds.length === records.length ? '取消全选' : '全选本页'}
+            {{ selectedIds.length === records.length ? '取消全选' : '全选本页' }}
           </el-button>
-        已选 {{ selectedIds.length }} 条；最大单条覆盖长度 {{ stats.maxCoverCm }} cm。
+        已选 {{ selectedIds.length }} 条；最大单条覆盖长度 {{ stats.maxCoverCm }} cm；原始录入合计 {{ stats.rawCoverCmTotal }} cm。
       </p>
     </template>
 
@@ -551,5 +595,9 @@ onMounted(() => {
   margin-top: 10px;
   max-height: 160px;
   overflow: auto;
+}
+
+.page__dropped {
+  color: #c0392b;
 }
 </style>

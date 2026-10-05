@@ -231,7 +231,12 @@ export async function seedDemoData(): Promise<void> {
         { id: 'cor_ql01a_1', beltId: 'belt_ql01_a', genus: '鹿角珊瑚属', form: '枝状', coverCm: 860, bleachLevel: '无', remark: '长势良好' },
         { id: 'cor_ql01a_2', beltId: 'belt_ql01_a', genus: '杯形珊瑚属', form: '枝状', coverCm: 540, bleachLevel: '轻', remark: '局部褪色' },
         { id: 'cor_ql01a_3', beltId: 'belt_ql01_a', genus: '滨珊瑚属', form: '块状', coverCm: 1120, bleachLevel: '无', remark: '' },
-        { id: 'cor_ql01a_4', beltId: 'belt_ql01_a', genus: '软珊瑚属', form: '软珊瑚', coverCm: 380, bleachLevel: '轻', remark: '' }
+        { id: 'cor_ql01a_4', beltId: 'belt_ql01_a', genus: '软珊瑚属', form: '软珊瑚', coverCm: 380, bleachLevel: '轻', remark: '' },
+        // 同属同形态重复记录：有效覆盖取最长一条，白化取最重一条
+        { id: 'cor_ql01a_5', beltId: 'belt_ql01_a', genus: '鹿角珊瑚属', form: '枝状', coverCm: 620, bleachLevel: '中', remark: '同属复录，边缘白化' },
+        { id: 'cor_ql01a_6', beltId: 'belt_ql01_a', genus: '滨珊瑚属', form: '块状', coverCm: 480, bleachLevel: '轻', remark: '同属复录，局部褪色' },
+        { id: 'cor_ql01a_7', beltId: 'belt_ql01_a', genus: '软珊瑚属', form: '软珊瑚', coverCm: 900, bleachLevel: '重', remark: '同属复录，白化明显' },
+        { id: 'cor_ql01a_8', beltId: 'belt_ql01_a', genus: '菊花珊瑚属', form: '块状', coverCm: 1700, bleachLevel: '死亡', remark: '有效覆盖超样带长度，封顶演示' }
       ],
       fishes: [
         { id: 'fsh_ql01a_1', beltId: 'belt_ql01_a', family: '雀鲷科', count: 46, sizeClass: '0-10cm', category: '鱼类' },

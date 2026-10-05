@@ -116,8 +116,10 @@ async function refresh(): Promise<void> {
     surveyDate: row.surveyDate,
     observer: row.observer,
     coralCount: row.coralCount,
+    groupCount: row.groupCount,
     coverCmTotal: row.coverCmTotal,
     coveragePct: row.coveragePct,
+    truncatedCm: row.truncatedCm,
     bleachIndex: row.bleachIndex,
     grade: row.grade,
     bleachedSharePct: row.bleachedSharePct,
@@ -217,7 +219,7 @@ async function copySummary(): Promise<void> {
   const text = rows.value
     .map(
       (row) =>
-        `${row.reefName}｜站位 ${row.siteNo}｜样带 ${row.beltNo}（${row.orientation}向 ${row.lengthM} m）：珊瑚覆盖率 ${row.coveragePct}%，白化指数 ${row.bleachIndex}（${row.grade}），白化占比 ${row.bleachedSharePct}%，鱼类 ${row.fishTotal} 尾（${row.fishDensity} 尾/100m²）`
+        `${row.reefName}｜站位 ${row.siteNo}｜样带 ${row.beltNo}（${row.orientation}向 ${row.lengthM} m）：珊瑚覆盖率 ${row.coveragePct}%，白化指数 ${row.bleachIndex}（${row.grade}），白化占比 ${row.bleachedSharePct}%，鱼类 ${row.fishTotal} 尾（${row.fishDensity} 尾/100m²）${row.truncatedCm > 0 ? `，有效覆盖超样带长度已封顶（截掉 ${row.truncatedCm} cm）` : ''}`
     )
     .join('\n')
   try {
@@ -249,7 +251,7 @@ onMounted(() => {
       <div>
         <h2 class="page__title">白化等级评定与覆盖度汇总</h2>
         <p class="gb-hint">
-          按样带汇总珊瑚覆盖率、白化指数（按覆盖长度加权，0 ~ 4）与鱼类密度，并可按礁区、白化等级筛选；同时提供结构版本查看与 JSON 导入导出。
+          按样带汇总珊瑚覆盖率、白化指数（按有效覆盖长度加权，0 ~ 4）与鱼类密度；同一条样带内「属名 + 形态」相同的记录只取覆盖最长、白化最重的一条计入，有效覆盖合计超过样带长度时自动封顶，并可按礁区、白化等级筛选；同时提供结构版本查看与 JSON 导入导出。
         </p>
       </div>
       <div class="page__actions">
@@ -354,6 +356,7 @@ onMounted(() => {
           <template #default="{ row }">
             <span class="gb-mono">{{ row.coveragePct }}%</span>
             <div class="gb-hint gb-mono">{{ row.coverCmTotal }} cm</div>
+            <div v-if="row.truncatedCm > 0" class="gb-hint gb-mono gb-truncate">已截 {{ row.truncatedCm }} cm</div>
           </template>
         </el-table-column>
         <el-table-column label="白化评定" width="170">
@@ -529,5 +532,9 @@ onMounted(() => {
 .page__mini-bar {
   display: block;
   height: 100%;
+}
+
+.gb-truncate {
+  color: #b9770e;
 }
 </style>

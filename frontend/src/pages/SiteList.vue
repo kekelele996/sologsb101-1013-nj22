@@ -20,7 +20,7 @@ import { useBeltStore } from '@/stores/beltStore'
 import { useSurveyStore } from '@/stores/surveyStore'
 import { formatLatLng, SUBSTRATES, validateLatLng } from '@/types/site'
 import type { Site } from '@/types/site'
-import { bleachGrade, bleachIndex } from '@/utils/bleach'
+import { bleachGrade, bleachIndex, combineEffective } from '@/utils/bleach'
 import { initDatabase } from '@/utils/db'
 
 const route = useRoute()
@@ -54,9 +54,10 @@ const rows = computed(() => {
   })
   return sites.map((site) => {
     const belts = beltStore.beltsOfSite(site.id)
-    const beltIds = new Set(belts.map((belt) => belt.id))
-    const corals = surveyStore.corals.filter((coral) => beltIds.has(coral.beltId))
-    const index = bleachIndex(corals)
+    const corals = surveyStore.corals.filter((coral) => belts.some((belt) => belt.id === coral.beltId))
+    // 样带内按属名 + 形态去重，跨样带不去重
+    const effective = combineEffective(belts.map((belt) => corals.filter((coral) => coral.beltId === belt.id)))
+    const index = bleachIndex(effective)
     return {
       site,
       beltCount: belts.length,

@@ -19,7 +19,7 @@ import { useBeltStore } from '@/stores/beltStore'
 import { useSurveyStore } from '@/stores/surveyStore'
 import { AREA_BUCKETS, createEmptyReefFilter, PROTECT_STATUSES } from '@/types/reef'
 import type { ProtectStatus, Reef } from '@/types/reef'
-import { bleachGrade, bleachIndex } from '@/utils/bleach'
+import { bleachGrade, bleachIndex, combineEffective } from '@/utils/bleach'
 import { initDatabase } from '@/utils/db'
 
 const route = useRoute()
@@ -46,10 +46,11 @@ const cards = computed(() =>
     const sites = reefStore.sites.filter((site) => site.reefId === reef.id)
     const siteIds = new Set(sites.map((site) => site.id))
     const belts = beltStore.belts.filter((belt) => siteIds.has(belt.siteId))
-    const beltIds = new Set(belts.map((belt) => belt.id))
-    const corals = surveyStore.corals.filter((coral) => beltIds.has(coral.beltId))
-    const fishes = surveyStore.fishes.filter((fish) => beltIds.has(fish.beltId))
-    const index = bleachIndex(corals)
+    const corals = surveyStore.corals.filter((coral) => belts.some((belt) => belt.id === coral.beltId))
+    const fishes = surveyStore.fishes.filter((fish) => belts.some((belt) => belt.id === fish.beltId))
+    // 样带内按属名 + 形态去重，跨样带不去重
+    const effective = combineEffective(belts.map((belt) => corals.filter((coral) => coral.beltId === belt.id)))
+    const index = bleachIndex(effective)
     return {
       reef,
       siteCount: sites.length,

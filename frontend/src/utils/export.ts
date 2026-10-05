@@ -12,10 +12,9 @@ import {
   type BackupPayload
 } from '@/utils/db'
 import {
-  BLEACH_LEVELS,
   type BleachLevel
 } from '@/types/coralRecord'
-import { bleachGrade, bleachIndex, bleachedSharePct, coralCoveragePct, fishDensity, round } from '@/utils/bleach'
+import { bleachGrade, fishDensity, round, summarizeCorals } from '@/utils/bleach'
 
 /** 备份集合键名 */
 export const BACKUP_KEYS = ['reefs', 'sites', 'belts', 'corals', 'fishes'] as const
@@ -174,9 +173,13 @@ export interface CoverageLine {
   surveyDate: string
   observer: string
   coralCount: number
+  /** 去重后的属名 + 形态组数 */
+  groupCount: number
   coverCmTotal: number
-  /** 珊瑚覆盖率（%） */
+  /** 珊瑚覆盖率（%，封顶后 ≤ 100） */
   coveragePct: number
+  /** 有效覆盖合计超出样带长度被截掉的长度（cm） */
+  truncatedCm: number
   /** 白化指数 0 ~ 4 */
   bleachIndex: number
   /** 总体白化等级 */
@@ -214,23 +217,13 @@ export function buildCoverageLines(payload: BackupPayload): CoverageLine[] {
       const reef = site ? reefById.get(site.reefId) : undefined
       const corals = coralsByBelt.get(belt.id) ?? []
       const fishes = fishesByBelt.get(belt.id) ?? []
-      const coverCmTotal = round(
-        corals.reduce((sum, coral) => sum + coral.coverCm, 0),
-        1
-      )
-      const index = bleachIndex(corals)
-      const grade = bleachGrade(index)
-      const distribution: BleachDistribution = { 无: 0, 轻: 0, 中: 0, 重: 0, 死亡: 0 }
-      BLEACH_LEVELS.forEach((level) => {
-        distribution[level] = round(
-          corals.filter((coral) => coral.bleachLevel === level).reduce((sum, coral) => sum + coral.coverCm, 0),
-          1
-        )
-      })
+      const summary = summarizeCorals(corals, belt.lengthM)
       const fishTotal = fishes.filter((fish) => fish.category === '鱼类').reduce((sum, fish) => sum + fish.count, 0)
       const invertebrateTotal = fishes
         .filter((fish) => fish.category === '无脊椎动物')
         .reduce((sum, fish) => sum + fish.count, 0)
+      const truncationNote =
+        summary.truncatedCm > 0 ? `，有效覆盖超样带长度已封顶（截掉 ${summary.truncatedCm} cm）` : ''
       return {
         beltId: belt.id,
         beltNo: belt.no,
@@ -242,22 +235,24 @@ export function buildCoverageLines(payload: BackupPayload): CoverageLine[] {
         orientation: belt.orientation,
         surveyDate: belt.surveyDate,
         observer: belt.observer,
-        coralCount: corals.length,
-        coverCmTotal,
-        coveragePct: coralCoveragePct(coverCmTotal, belt.lengthM),
-        bleachIndex: index,
-        grade,
-        bleachedSharePct: bleachedSharePct(corals),
-        distribution,
+        coralCount: summary.rawRecordCount,
+        groupCount: summary.groupCount,
+        coverCmTotal: summary.effectiveCoverCm,
+        coveragePct: summary.coveragePct,
+        truncatedCm: summary.truncatedCm,
+        bleachIndex: summary.bleachIndex,
+        grade: summary.grade,
+        bleachedSharePct: summary.bleachedSharePct,
+        distribution: summary.distribution,
         fishTotal,
         invertebrateTotal,
         fishDensity: fishDensity(fishTotal, belt.lengthM),
         conclusion:
-          corals.length === 0
+          summary.rawRecordCount === 0
             ? '该样带尚未录入珊瑚记录'
-            : grade === '无'
-              ? `珊瑚覆盖率 ${coralCoveragePct(coverCmTotal, belt.lengthM)}%，未见白化`
-              : `珊瑚覆盖率 ${coralCoveragePct(coverCmTotal, belt.lengthM)}%，白化指数 ${index}（${grade}），白化占比 ${bleachedSharePct(corals)}%`
+            : summary.grade === '无'
+              ? `珊瑚覆盖率 ${summary.coveragePct}%，未见白化${truncationNote}`
+              : `珊瑚覆盖率 ${summary.coveragePct}%，白化指数 ${summary.bleachIndex}（${summary.grade}），白化占比 ${summary.bleachedSharePct}%${truncationNote}`
       }
     })
     .sort((a, b) => b.bleachIndex - a.bleachIndex)
@@ -294,10 +289,7 @@ export function buildReefSummaries(payload: BackupPayload, lines: CoverageLine[]
       siteCount: siteIds.size,
       beltCount: beltIds.size,
       coralCount: corals.length,
-      coverCmTotal: round(
-        corals.reduce((sum, coral) => sum + coral.coverCm, 0),
-        1
-      ),
+      coverCmTotal: round(lines4Reef.reduce((sum, line) => sum + line.coverCmTotal, 0), 1),
       avgBleachIndex,
       grade: bleachGrade(avgBleachIndex),
       fishTotal: payload.fishes

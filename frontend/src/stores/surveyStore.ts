@@ -11,7 +11,7 @@ import type { CountCategory, FishCount, SizeClass } from '@/types/fishCount'
 import type { Reef } from '@/types/reef'
 import type { Site } from '@/types/site'
 import type { Belt } from '@/types/belt'
-import { bleachGrade, bleachIndex, bleachedSharePct, coralCoveragePct, fishDensity, round } from '@/utils/bleach'
+import { bleachGrade, bleachIndex, bleachedSharePct, combineEffective, fishDensity, round, summarizeCorals } from '@/utils/bleach'
 
 /** 覆盖度汇总页筛选条件 */
 export interface SurveyFilterState {
@@ -44,8 +44,12 @@ export interface CoverageSummaryRow {
   surveyDate: string
   observer: string
   coralCount: number
+  /** 去重后的属名 + 形态组数 */
+  groupCount: number
   coverCmTotal: number
   coveragePct: number
+  /** 有效覆盖合计超出样带长度被截掉的长度（cm） */
+  truncatedCm: number
   bleachIndex: number
   grade: BleachLevel
   bleachedSharePct: number
@@ -145,18 +149,7 @@ export const useSurveyStore = defineStore('survey', () => {
         const reef = site ? reefs.value.find((item) => item.id === site.reefId) : undefined
         const beltCorals = corals.value.filter((coral) => coral.beltId === belt.id)
         const beltFishes = fishes.value.filter((fish) => fish.beltId === belt.id)
-        const coverCmTotal = round(
-          beltCorals.reduce((sum, coral) => sum + coral.coverCm, 0),
-          1
-        )
-        const distribution: Record<BleachLevel, number> = { 无: 0, 轻: 0, 中: 0, 重: 0, 死亡: 0 }
-        BLEACH_LEVELS.forEach((level) => {
-          distribution[level] = round(
-            beltCorals.filter((coral) => coral.bleachLevel === level).reduce((sum, coral) => sum + coral.coverCm, 0),
-            1
-          )
-        })
-        const index = bleachIndex(beltCorals)
+        const summary = summarizeCorals(beltCorals, belt.lengthM)
         const fishTotal = beltFishes.filter((fish) => fish.category === '鱼类').reduce((sum, fish) => sum + fish.count, 0)
         return {
           beltId: belt.id,
@@ -169,13 +162,15 @@ export const useSurveyStore = defineStore('survey', () => {
           orientation: belt.orientation,
           surveyDate: belt.surveyDate,
           observer: belt.observer,
-          coralCount: beltCorals.length,
-          coverCmTotal,
-          coveragePct: coralCoveragePct(coverCmTotal, belt.lengthM),
-          bleachIndex: index,
-          grade: bleachGrade(index),
-          bleachedSharePct: bleachedSharePct(beltCorals),
-          distribution,
+          coralCount: summary.rawRecordCount,
+          groupCount: summary.groupCount,
+          coverCmTotal: summary.effectiveCoverCm,
+          coveragePct: summary.coveragePct,
+          truncatedCm: summary.truncatedCm,
+          bleachIndex: summary.bleachIndex,
+          grade: summary.grade,
+          bleachedSharePct: summary.bleachedSharePct,
+          distribution: summary.distribution,
           fishTotal,
           invertebrateTotal: beltFishes
             .filter((fish) => fish.category === '无脊椎动物')
@@ -212,26 +207,30 @@ export const useSurveyStore = defineStore('survey', () => {
       filter.value.onlyBleached
   )
 
-  /** 全局白化等级分布与总体指数 */
+  /** 全局白化等级分布与总体指数（样带内去重，跨样带不去重） */
   const globalStats = computed(() => {
+    const effective = combineEffective(
+      belts.value.map((belt) => corals.value.filter((coral) => coral.beltId === belt.id))
+    )
     const distribution: Record<BleachLevel, number> = { 无: 0, 轻: 0, 中: 0, 重: 0, 死亡: 0 }
     BLEACH_LEVELS.forEach((level) => {
       distribution[level] = round(
-        corals.value.filter((coral) => coral.bleachLevel === level).reduce((sum, coral) => sum + coral.coverCm, 0),
+        effective.filter((coral) => coral.bleachLevel === level).reduce((sum, coral) => sum + coral.coverCm, 0),
         1
       )
     })
-    const index = bleachIndex(corals.value)
+    const index = bleachIndex(effective)
     return {
       coralCount: corals.value.length,
+      groupCount: effective.length,
       fishCount: fishes.value.length,
       coverCmTotal: round(
-        corals.value.reduce((sum, coral) => sum + coral.coverCm, 0),
+        effective.reduce((sum, coral) => sum + coral.coverCm, 0),
         1
       ),
       bleachIndex: index,
       grade: bleachGrade(index),
-      bleachedSharePct: bleachedSharePct(corals.value),
+      bleachedSharePct: bleachedSharePct(effective),
       distribution
     }
   })

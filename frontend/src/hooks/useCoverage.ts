@@ -15,11 +15,10 @@ import {
   bleachGrade,
   bleachIndex,
   bleachedSharePct,
-  coralCoveragePct,
+  combineEffective,
   fishDensity,
-  groupByForm,
-  groupByGenus,
-  round
+  round,
+  summarizeCorals
 } from '@/utils/bleach'
 
 /** 单条样带的覆盖度成果 */
@@ -35,20 +34,24 @@ export interface BeltCoverage {
   surveyDate: string
   observer: string
   coralCount: number
+  /** 去重后的属名 + 形态组数 */
+  groupCount: number
   coverCmTotal: number
-  /** 珊瑚覆盖率（%） */
+  /** 珊瑚覆盖率（%，封顶后 ≤ 100） */
   coveragePct: number
+  /** 有效覆盖合计超出样带长度被截掉的长度（cm） */
+  truncatedCm: number
   /** 白化指数 0 ~ 4 */
   bleachIndex: number
   grade: BleachLevel
   /** 白化占比（%） */
   bleachedSharePct: number
-  /** 各白化等级累计覆盖长度 */
+  /** 各白化等级有效覆盖长度 */
   distribution: Record<BleachLevel, number>
-  /** 按属名分组的覆盖长度 */
-  byGenus: Array<{ genus: string; coverCm: number }>
-  /** 按形态分组的覆盖长度 */
-  byForm: Array<{ form: CoralForm; coverCm: number }>
+  /** 按属名分组的有效覆盖长度 */
+  byGenus: Array<{ genus: string; coverCm: number; recordCount: number; bleachIndex: number; grade: BleachLevel }>
+  /** 按形态分组的有效覆盖长度 */
+  byForm: Array<{ form: CoralForm; coverCm: number; recordCount: number }>
   fishTotal: number
   invertebrateTotal: number
   /** 鱼类密度（尾 / 100 m²） */
@@ -132,18 +135,7 @@ export function useCoverage(): UseCoverageResult {
     const reef = site ? reefOf(site.reefId) : null
     const beltCorals = corals.value.filter((coral) => coral.beltId === belt.id)
     const beltFishes = fishes.value.filter((fish) => fish.beltId === belt.id)
-    const coverCmTotal = round(
-      beltCorals.reduce((sum, coral) => sum + coral.coverCm, 0),
-      1
-    )
-    const index = bleachIndex(beltCorals)
-    const distribution = EMPTY_DISTRIBUTION()
-    BLEACH_LEVELS.forEach((level) => {
-      distribution[level] = round(
-        beltCorals.filter((coral) => coral.bleachLevel === level).reduce((sum, coral) => sum + coral.coverCm, 0),
-        1
-      )
-    })
+    const summary = summarizeCorals(beltCorals, belt.lengthM)
     const fishTotal = beltFishes.filter((fish) => fish.category === '鱼类').reduce((sum, fish) => sum + fish.count, 0)
     const invertebrateTotal = beltFishes
       .filter((fish) => fish.category === '无脊椎动物')
@@ -159,15 +151,17 @@ export function useCoverage(): UseCoverageResult {
       orientation: belt.orientation,
       surveyDate: belt.surveyDate,
       observer: belt.observer,
-      coralCount: beltCorals.length,
-      coverCmTotal,
-      coveragePct: coralCoveragePct(coverCmTotal, belt.lengthM),
-      bleachIndex: index,
-      grade: bleachGrade(index),
-      bleachedSharePct: bleachedSharePct(beltCorals),
-      distribution,
-      byGenus: groupByGenus(beltCorals),
-      byForm: groupByForm(beltCorals),
+      coralCount: summary.rawRecordCount,
+      groupCount: summary.groupCount,
+      coverCmTotal: summary.effectiveCoverCm,
+      coveragePct: summary.coveragePct,
+      truncatedCm: summary.truncatedCm,
+      bleachIndex: summary.bleachIndex,
+      grade: summary.grade,
+      bleachedSharePct: summary.bleachedSharePct,
+      distribution: summary.distribution,
+      byGenus: summary.byGenus,
+      byForm: summary.byForm,
       fishTotal,
       invertebrateTotal,
       fishDensity: fishDensity(fishTotal, belt.lengthM)
@@ -190,23 +184,27 @@ export function useCoverage(): UseCoverageResult {
     if (!site) return null
     const reef = reefOf(site.reefId)
     const siteBelts = belts.value.filter((belt) => belt.siteId === site.id)
-    const beltIds = new Set(siteBelts.map((belt) => belt.id))
-    const siteCorals = corals.value.filter((coral) => beltIds.has(coral.beltId))
-    const siteFishes = fishes.value.filter((fish) => beltIds.has(fish.beltId))
-    const coverCmTotal = round(
-      siteCorals.reduce((sum, coral) => sum + coral.coverCm, 0),
-      1
-    )
-    const coverages = siteBelts.map((belt) => {
-      const beltCorals = siteCorals.filter((coral) => coral.beltId === belt.id)
-      return coralCoveragePct(
-        beltCorals.reduce((sum, coral) => sum + coral.coverCm, 0),
+    const siteFishes = fishes.value.filter((fish) => siteBelts.some((belt) => belt.id === fish.beltId))
+    // 样带内按属名 + 形态去重，跨样带不去重；覆盖率封顶只在单条样带口径上做
+    const beltSummaries = siteBelts.map((belt) =>
+      summarizeCorals(
+        corals.value.filter((coral) => coral.beltId === belt.id),
         belt.lengthM
       )
-    })
-    const indices = siteBelts.map((belt) => bleachIndex(siteCorals.filter((coral) => coral.beltId === belt.id)))
+    )
+    const effective = combineEffective(beltSummaries.map((summary) => summary.effective))
+    const coverCmTotal = round(
+      effective.reduce((sum, coral) => sum + coral.coverCm, 0),
+      1
+    )
+    const avgCoveragePct =
+      beltSummaries.length === 0
+        ? 0
+        : round(beltSummaries.reduce((sum, summary) => sum + summary.coveragePct, 0) / beltSummaries.length, 2)
     const avgBleachIndex =
-      indices.length === 0 ? 0 : round(indices.reduce((sum, value) => sum + value, 0) / indices.length, 2)
+      beltSummaries.length === 0
+        ? 0
+        : round(beltSummaries.reduce((sum, summary) => sum + summary.bleachIndex, 0) / beltSummaries.length, 2)
     const fishTotal = siteFishes.filter((fish) => fish.category === '鱼类').reduce((sum, fish) => sum + fish.count, 0)
     const totalBeltLength = siteBelts.reduce((sum, belt) => sum + belt.lengthM, 0)
     return {
@@ -216,13 +214,12 @@ export function useCoverage(): UseCoverageResult {
       reefName: reef?.name ?? '未知礁区',
       depthM: site.depthM,
       beltCount: siteBelts.length,
-      coralCount: siteCorals.length,
+      coralCount: effective.length,
       coverCmTotal,
-      avgCoveragePct:
-        coverages.length === 0 ? 0 : round(coverages.reduce((sum, value) => sum + value, 0) / coverages.length, 2),
+      avgCoveragePct,
       avgBleachIndex,
       grade: bleachGrade(avgBleachIndex),
-      bleachedSharePct: bleachedSharePct(siteCorals),
+      bleachedSharePct: bleachedSharePct(effective),
       fishTotal,
       invertebrateTotal: siteFishes
         .filter((fish) => fish.category === '无脊椎动物')
